@@ -17,6 +17,8 @@ import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
 import torch.distributed as dist
+import torch.cuda.profiler as ncu
+
 
 from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import accuracy
@@ -263,13 +265,14 @@ def train_one_epoch(
     acc1_meter = AverageMeter()
     acc5_meter = AverageMeter()
 
-    warmup_batches = 20
-    total_time = 0.0
-    total_images = 0
-
     start = time.time()
     end = time.time()
+
     for idx, (samples, targets) in enumerate(data_loader):
+        if idx == 0:
+            torch.cuda.synchronize()
+            ncu.start()
+
         normal_global_idx = epoch * NORM_ITER_LEN + (idx * NORM_ITER_LEN // num_steps)
 
         samples = samples.cuda(non_blocking=True)
@@ -303,6 +306,7 @@ def train_one_epoch(
             lr_scheduler.step_update(
                 (epoch * num_steps + idx) // config.TRAIN.ACCUMULATION_STEPS
             )
+
         loss_scale_value = loss_scaler.state_dict().get("scale", 1.0)
 
         with torch.no_grad():
@@ -312,17 +316,12 @@ def train_one_epoch(
 
         torch.cuda.synchronize()
 
-        batch_duration = time.time() - end
         loss_meter.update(loss.item(), targets.size(0))
         if is_valid_grad_norm(grad_norm):
             norm_meter.update(grad_norm)
         scaler_meter.update(loss_scale_value)
-        batch_time.update(batch_duration)
+        batch_time.update(time.time() - end)
         end = time.time()
-
-        if idx >= warmup_batches:
-            total_time += batch_duration
-            total_images += targets.size(0)
 
         if idx % config.PRINT_FREQ == 0:
             lr = optimizer.param_groups[0]["lr"]
@@ -340,19 +339,28 @@ def train_one_epoch(
                 f"mem {memory_used:.0f}MB"
             )
 
+            if is_main_process() and args.use_wandb:
+                wandb.log(
+                    {
+                        "train/acc@1": acc1_meter.val,
+                        "train/acc@5": acc5_meter.val,
+                        "train/loss": loss_meter.val,
+                        "train/grad_norm": norm_meter.val,
+                        "train/loss_scale": scaler_meter.val,
+                        "train/lr": lr,
+                    },
+                    step=normal_global_idx,
+                )
+
+        if idx == 0:
+            torch.cuda.synchronize()
+            ncu.stop()
+            break  # Exit after one batch for profiling
+
     epoch_time = time.time() - start
     logger.info(
         f"EPOCH {epoch} training takes {datetime.timedelta(seconds=int(epoch_time))}"
     )
-    if total_images > 0:
-        avg_batch_time = total_time / (len(data_loader) - warmup_batches)
-        throughput = total_images / total_time
-        logger.info("\n===== THROUGHPUT (after warmup) =====")
-        logger.info(f"Total batches timed: {len(data_loader) - warmup_batches}")
-        logger.info(f"Total time: {total_time:.4f} sec")
-        logger.info(f"Average batch time: {avg_batch_time:.4f} sec")
-        logger.info(f"Throughput: {throughput:.2f} images/sec")
-        logger.info("======================================\n")
 
 
 def train_one_epoch_distill_using_saved_logits(
@@ -433,6 +441,10 @@ def train_one_epoch_distill_using_saved_logits(
                 (epoch * num_steps + idx) // config.TRAIN.ACCUMULATION_STEPS
             )
         loss_scale_value = loss_scaler.state_dict().get("scale", 1.0)
+
+        if idx == 0:
+            ncu.stop()
+            break
 
         # compute accuracy
         real_batch_size = len(original_targets)

@@ -313,6 +313,7 @@ def train_one_epoch(
         it = start_steps + step  # global training iteration
 
         if data_iter_step == 0:
+            torch.cuda.synchronize()
             ncu.start()
 
         if (
@@ -376,6 +377,8 @@ def train_one_epoch(
 
         if data_iter_step == 0:
             ncu.stop()
+            torch.cuda.synchronize()
+            break
 
         if mixup_fn is None:
             class_acc = (output.max(-1)[-1] == targets).float().mean()
