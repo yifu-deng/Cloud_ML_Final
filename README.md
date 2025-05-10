@@ -120,7 +120,6 @@ sm__inst_executed_pipe_tensor.sum \
 
 Run all .ipynb files in Jupyter Notebook.
 
-
 ## Reference Repos:
 ResNet-V2-BiT: https://huggingface.co/timm/resnetv2_50x1_bit.goog_in21k_ft_in1k
 
