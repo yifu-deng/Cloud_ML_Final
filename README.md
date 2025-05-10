@@ -2,7 +2,7 @@
 
 ## Team Members
 
-- **Yifu Deng (yd2686),** – ResNet50-v2 BiT, Performance Analysis (Time & Throughput)
+- **Yifu Deng (yd2686)** – ResNet50-v2 BiT, Performance Analysis (Time & Throughput)
 - **Zhehan Qi (zq2201)** – ConvNeXt, Performance Analysis (NCU Roofline Analysis)  
 - **Boshan Chen (bc3603)** – TinyViT, Accuracy Comparison & Inference Demo
 
